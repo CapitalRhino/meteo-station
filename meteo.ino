@@ -7,11 +7,12 @@
 int lcd_key = 0;
 int adc_key_in = 0;
 
-float tempUpHold = 20.5;
+float tempUpHold = 44.5;
 float tempDownHold = -10.5;
 float humiUpHold = 95.0;
 float humiDownHold = 10.0;
-int gasTreshold = 800;
+int gasUpHold = 9000;
+int gasDownHold = 0;
 
 #define btnRIGHT 0
 #define btnUP 1
@@ -56,7 +57,7 @@ void setup() {
   // splash screen
   lcd.print(" METEO  STATION ");
   lcd.setCursor(0, 1);
-  lcd.print(" v0.0.4 Welcome ");
+  lcd.print(" v1.0.0 Welcome ");
   delay(2000);
   lcd.clear();
   Serial.println("Ready");
@@ -69,10 +70,33 @@ bool splashShown = false;
 bool clearScreen = false;
 bool exitSettings = false;
 
+String typeAlert = "                ";
+bool tempAlert = false;
+bool humiAlert = false;
+bool gasAlert = false;
+bool alertOverride = false;
+int alertStart = 0;
+int alertLength = 10;
+
 void readButtons() {
   lcd_key = read_LCD_buttons(); // read the buttons
   switch (lcd_key) { // depending on which button was pushed, we perform an action
   case btnRIGHT: {
+    if (gasAlert) {
+      gasAlert = false;
+      alertOverride = true;
+      alertStart = millis() / 1000;
+    }
+    if (humiAlert) {
+      humiAlert = false;
+      alertOverride = true;
+      alertStart = millis() / 1000;
+    }
+    if (tempAlert) {
+      tempAlert = false;
+      alertOverride = true;
+      alertStart = millis() / 1000;
+    }
     switch (selectedMenu) {
     case 0: {
       break;
@@ -94,6 +118,14 @@ void readButtons() {
       break;
     }
     case 3: {
+      if (selectedOption) {
+        gasDownHold += 1;
+      } else {
+        gasUpHold += 1;
+      }
+      break;
+    }
+    case 4: {
       if (!selectedOption) {
         exitSettings = true;
       }
@@ -124,6 +156,14 @@ void readButtons() {
       break;
     }
     case 3: {
+      if (selectedOption) {
+        gasDownHold -= 1;
+      } else {
+        gasUpHold -= 1;
+      }
+      break;
+    }
+    case 4: {
       if (!selectedOption) {
         exitSettings = false;
       }
@@ -154,6 +194,14 @@ void readButtons() {
       break;
     }
     case 3: {
+      if (selectedOption) {
+        selectedOption = false;
+      } else {
+        selectedOption = true;
+      }
+      break;
+    }
+    case 4: {
       selectedOption = false;
       break;
     }
@@ -182,6 +230,14 @@ void readButtons() {
       break;
     }
     case 3: {
+      if (selectedOption) {
+        selectedOption = false;
+      } else {
+        selectedOption = true;
+      }
+      break;
+    }
+    case 4: {
       selectedOption = false;
       break;
     }
@@ -206,6 +262,11 @@ void readButtons() {
       break;
     }
     case 3: {
+      selectedMenu = 4;
+      splashShown = false;
+      break;
+    }
+    case 4: {
       selectedMenu = 0;
       splashShown = false;
       clearScreen = true;
@@ -237,14 +298,12 @@ void selectionShow() {
 
 void status1() {
   // gas sensor print
-  if (ccs.available()) {
-    if (!ccs.readData()) {
-      lcd.setCursor(0, 0);
-      lcd.print(ccs.geteCO2());
-      lcd.print("ppm");
-      lcd.setCursor(10, 0);
-      lcd.print(ccs.getTVOC());
-    }
+  if (!ccs.readData()) {
+    lcd.setCursor(0, 0);
+    lcd.print(ccs.geteCO2());
+    lcd.print("ppm");
+    lcd.setCursor(10, 0);
+    lcd.print(ccs.getTVOC());
   }
   float h = htu.readHumidity();
   // Read temperature as Celsius
@@ -257,6 +316,33 @@ void status1() {
   lcd.setCursor(10, 1);
   lcd.print(h, 1);
   lcd.print("%");
+}
+
+void alertChecker() {
+  if (ccs.geteCO2() > gasUpHold || ccs.geteCO2() < gasDownHold) {
+    gasAlert = true;
+    typeAlert += "Gas ";
+  }
+  if (htu.readHumidity() > humiUpHold || htu.readHumidity() < humiDownHold) {
+    humiAlert = true;
+    typeAlert += "Hum. ";
+  }
+  if (htu.readTemperature() > tempUpHold || htu.readTemperature() < tempDownHold) {
+    tempAlert = true;
+    typeAlert += "Temp. ";
+  }
+  if (alertOverride && alertStart + alertLength == millis() / 1000) {
+    alertOverride = false;
+    alertStart = 0;
+    typeAlert = "                ";
+  }
+}
+
+void alert() {
+  lcd.setCursor(0, 0);
+  lcd.print(typeAlert);
+  lcd.setCursor(0, 1);
+  lcd.print("Alert!  > to clr");
 }
 
 void settings1() {
@@ -285,14 +371,27 @@ void settings2() {
 
 void settings3() {
   selectionShow();
+  lcd.setCursor(1, 0);
+  lcd.print("Gas UP   ");
+  lcd.print(gasUpHold, 1);
+  lcd.setCursor(1, 1);
+  lcd.print("Gas DOWN ");
+  lcd.print(gasDownHold, 1);
+  delay(150);
+}
+
+void settings4() {
+  selectionShow();
   lcd.setCursor(0, 0);
   lcd.print("Exit?     ");
+  /*
   if (exitSettings) {
     lcd.print("YES");
   }
   else {
     lcd.print("NO");
   }
+  */
   lcd.setCursor(1, 1);
   lcd.print("Press > to exit");
   clearScreen = true;
@@ -301,56 +400,78 @@ void settings3() {
 
 void loop() {
   readButtons();
+  alertChecker();
   if (exitSettings) {
     selectedMenu = 0;
     exitSettings = false;
   }
-  switch (selectedMenu) {
-  case 0: {
-    if (clearScreen) {
-      lcd.clear();
-      clearScreen = false;
+  if ((gasAlert || tempAlert || humiAlert) && !alertOverride) {
+      alert();
+      clearScreen = true;
+    typeAlert = "";
+  } else {
+    switch (selectedMenu) {
+    case 0: {
+      if (clearScreen) {
+        lcd.clear();
+        clearScreen = false;
+      }
+      if ((millis() / 1000) % 4 == 0) {
+        status1();
+      }
+      break;
     }
-    if ((millis() / 1000) % 4 == 0) {
-      status1();
+    case 1: {
+      if (!splashShown) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Temperature");
+        lcd.setCursor(0, 1);
+        lcd.print("settings");
+        delay(1000);
+        lcd.clear();
+        splashShown = true;
+      }
+      settings1();
+      break;
     }
-    break;
-  }
-  case 1: {
-    if (!splashShown) {
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Temperature");
-      lcd.setCursor(0, 1);
-      lcd.print("settings");
-      delay(1000);
-      lcd.clear();
-      splashShown = true;
+    case 2: {
+      if (!splashShown) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Humidity");
+        lcd.setCursor(0, 1);
+        lcd.print("settings");
+        delay(1000);
+        lcd.clear();
+        splashShown = true;
+      }
+      settings2();
+      break;
     }
-    settings1();
-    break;
-  }
-  case 2: {
-    if (!splashShown) {
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Humidity");
-      lcd.setCursor(0, 1);
-      lcd.print("settings");
-      delay(1000);
-      lcd.clear();
-      splashShown = true;
+    case 3: {
+      if (!splashShown) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Gas");
+        lcd.setCursor(0, 1);
+        lcd.print("settings");
+        delay(1000);
+        lcd.clear();
+        splashShown = true;
+      }
+      settings3();
+      break;
     }
-    settings2();
-    break;
-  }
-  case 3: {
-    if (!splashShown) {
-      lcd.clear();
-      splashShown = true;
+    case 4: {
+      if (!splashShown) {
+        lcd.clear();
+        splashShown = true;
+        selectedOption = false;
+      }
+      settings4();
+      break;
     }
-    settings3();
-    break;
-  }
+    }
   }
 }
